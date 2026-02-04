@@ -20,17 +20,36 @@ st.header("👤 Tu Perfil")
 
 if not st.session_state.profiles:
     st.info("👇 Crea tu primer perfil")
-    
-nuevo = st.text_input("Nombre del perfil:", key="nuevo", placeholder="Ej: Juan")
 
-if st.button("➕ Crear Perfil", type="primary") and nuevo:
-    if nuevo not in st.session_state.profiles:
-        st.session_state.profiles[nuevo] = {"days": 0, "history": []}
-        st.session_state.current_user = nuevo
-        st.success(f"✅ Perfil '{nuevo}' creado")
-        st.rerun()
-    else:
-        st.warning("⚠️ Ese perfil ya existe")
+# Formulario de creación mejorado
+with st.form("crear_perfil", clear_on_submit=True):
+    nuevo = st.text_input("Nombre del perfil:", placeholder="Ej: Juan")
+    
+    objetivo = st.radio(
+        "¿Para qué visa estás trabajando?",
+        options=["Primera visa (88 días)", "Segunda visa (179 días)"],
+        help="La primera WHV requiere 88 días para renovar. La segunda requiere 179 días para una tercera visa."
+    )
+    
+    submit = st.form_submit_button("➕ Crear Perfil", type="primary", use_container_width=True)
+    
+    if submit and nuevo:
+        if nuevo not in st.session_state.profiles:
+            # Determinar días objetivo
+            dias_objetivo = 88 if "88" in objetivo else 179
+            
+            st.session_state.profiles[nuevo] = {
+                "days": 0, 
+                "history": [],
+                "objetivo": dias_objetivo,
+                "tipo": "Primera WHV" if dias_objetivo == 88 else "Segunda WHV"
+            }
+            st.session_state.current_user = nuevo
+            st.toast(f'✅ Perfil creado: {dias_objetivo} días', icon='✅')
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            st.warning("⚠️ Ese perfil ya existe")
 
 if st.session_state.profiles:
     users = list(st.session_state.profiles.keys())
@@ -40,23 +59,32 @@ if st.session_state.profiles:
     
     profile = st.session_state.profiles[user]
     
+    # Asegurar compatibilidad con perfiles antiguos
+    if "objetivo" not in profile:
+        profile["objetivo"] = 179
+        profile["tipo"] = "Segunda WHV"
+    
     st.divider()
     
     # --- MÉTRICAS ---
     st.subheader(f"Hola, {user}! 👋")
     
+    # Mostrar tipo de visa
+    st.caption(f"🎯 Objetivo: {profile['tipo']} ({profile['objetivo']} días)")
+    
     dias = profile["days"]
-    faltantes = max(0, 179 - dias)
+    objetivo = profile["objetivo"]
+    faltantes = max(0, objetivo - dias)
     
     col1, col2 = st.columns(2)
-    col1.metric("📅 Días trabajados", f"{dias} / 179")
+    col1.metric("📅 Días trabajados", f"{dias} / {objetivo}")
     col2.metric("⏳ Faltan", faltantes)
     
-    st.progress(min(dias/179, 1.0))
+    st.progress(min(dias/objetivo, 1.0))
     
-    if dias >= 179:
+    if dias >= objetivo:
         st.balloons()
-        st.success("🎉 ¡Cumpliste los 179 días!")
+        st.success(f"🎉 ¡Cumpliste los {objetivo} días!")
     
     st.divider()
     
@@ -84,7 +112,6 @@ if st.session_state.profiles:
                 # --- DETECTOR MULTI-FORMATO ---
                 
                 # FORMATO 1 y 2: Hays (CIVEO)
-                # Patrón: "Normal Time W/E [fecha] [HORAS] $ [rate]"
                 patron_hays = r'Normal Time W/E.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
                 matches_hays = re.findall(patron_hays, texto)
                 
@@ -104,7 +131,6 @@ if st.session_state.profiles:
                         st.write(f"**Total combinado:** {total_hays} horas")
                 
                 # FORMATO 3: Statum Services
-                # Patrón: "Base Hourly" seguido de HOURS en columna
                 patron_statum = r'Base Hourly.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
                 match_statum = re.search(patron_statum, texto)
                 
@@ -114,7 +140,7 @@ if st.session_state.profiles:
                     candidatos.append(horas_statum)
                     st.success(f"✅ **Statum Services detectado:** {horas_statum} horas")
                 
-                # FORMATO GENÉRICO: Buscar "HOURS" en columnas
+                # FORMATO GENÉRICO
                 patron_hours_column = r'(?:HOURS|Hours)\s+(?:CALC|RATE).*?\n.*?(\d{1,3}(?:\.\d{1,2})?)\s+\$'
                 match_hours_col = re.search(patron_hours_column, texto, re.IGNORECASE)
                 
@@ -127,19 +153,17 @@ if st.session_state.profiles:
                 # Si se detectó algo automáticamente
                 if candidatos:
                     st.write("---")
-                    
-                    # Eliminar duplicados
                     candidatos = sorted(list(set(candidatos)), reverse=True)
                     
                     seleccion = st.multiselect(
                         "Confirma las horas detectadas:",
                         candidatos,
-                        default=candidatos,  # Auto-seleccionadas
+                        default=candidatos,
                         format_func=lambda x: f"{x} horas"
                     )
                     
                 else:
-                    # FALLBACK: Modo manual
+                    # FALLBACK
                     st.warning("⚠️ No reconocí el formato automáticamente")
                     
                     with st.expander("🔍 Ver texto extraído (para debug)"):
@@ -192,17 +216,16 @@ if st.session_state.profiles:
             
             # Vista previa
             nuevo_total = dias + dias_sumar
-            progreso_nuevo = min(nuevo_total / 179, 1.0) * 100
+            progreso_nuevo = min(nuevo_total / objetivo, 1.0) * 100
             
             col_a, col_b = st.columns(2)
             col_a.metric("Días actuales", dias)
-            col_b.metric("Nuevo total", f"{nuevo_total} / 179", delta=f"+{dias_sumar}")
+            col_b.metric("Nuevo total", f"{nuevo_total} / {objetivo}", delta=f"+{dias_sumar}")
             
             st.progress(progreso_nuevo / 100)
             
-            # Botón de confirmación CON FEEDBACK MEJORADO
+            # Botón de confirmación
             if st.button("✅ Confirmar y Guardar", type="primary", key="confirm", use_container_width=True):
-                # Spinner mientras guarda
                 with st.spinner('⏳ Guardando tu registro...'):
                     time.sleep(0.5)
                     
@@ -214,23 +237,20 @@ if st.session_state.profiles:
                         f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_sumar} días ({total}h) [{nombre_archivo}]"
                     )
                 
-                # Toast notifications
                 st.toast('✅ ¡Registro guardado!', icon='✅')
                 time.sleep(0.2)
-                st.toast(f'📊 Nuevo total: {nuevo_total}/179 días', icon='📊')
+                st.toast(f'📊 Nuevo total: {nuevo_total}/{objetivo} días', icon='📊')
                 
-                # Calcular progreso
-                nuevo_progreso = min(100, round((nuevo_total / 179) * 100))
+                nuevo_progreso = min(100, round((nuevo_total / objetivo) * 100))
                 
-                # Mensaje grande
                 st.success(f"""
 ### 🎉 ¡Registro guardado exitosamente!
 
 ✅ **{dias_sumar} días** agregados a tu contador
 
-📊 **Progreso:** {nuevo_total} / 179 días ({nuevo_progreso}%)
+📊 **Progreso:** {nuevo_total} / {objetivo} días ({nuevo_progreso}%)
 
-🎯 Te faltan **{179 - nuevo_total}** días para completar
+🎯 Te faltan **{objetivo - nuevo_total}** días para completar
                 """)
                 
                 st.balloons()
@@ -252,7 +272,7 @@ if st.session_state.profiles:
             time.sleep(0.5)
         
         st.toast(f'✅ {dias_manual} días agregados!', icon='✅')
-        st.success(f"✅ Agregados {dias_manual} días. Nuevo total: {profile['days']}/179")
+        st.success(f"✅ Agregados {dias_manual} días. Nuevo total: {profile['days']}/{objetivo}")
         time.sleep(1.5)
         st.rerun()
     
@@ -266,9 +286,7 @@ if st.session_state.profiles:
             with st.expander(f"📄 Registro #{len(profile['history']) - i}"):
                 st.text(h)
                 
-                # Botón para eliminar
                 if st.button("🗑️ Eliminar este registro", key=f"del_{i}"):
-                    # Extraer días del registro para restarlos
                     match = re.search(r'\+(\d+) días', h)
                     if match:
                         dias_a_restar = int(match.group(1))
@@ -286,6 +304,25 @@ if st.session_state.profiles:
     # --- OPCIONES AVANZADAS ---
     with st.expander("⚙️ Opciones avanzadas"):
         
+        # Opción para cambiar objetivo
+        st.write("**Cambiar objetivo de días:**")
+        nuevo_objetivo = st.radio(
+            "Selecciona nuevo objetivo:",
+            options=[88, 179],
+            index=0 if profile["objetivo"] == 88 else 1,
+            format_func=lambda x: f"{x} días ({'Primera WHV' if x == 88 else 'Segunda WHV'})",
+            key="cambiar_objetivo"
+        )
+        
+        if st.button("🔄 Actualizar objetivo", key="update_objetivo"):
+            profile["objetivo"] = nuevo_objetivo
+            profile["tipo"] = "Primera WHV" if nuevo_objetivo == 88 else "Segunda WHV"
+            st.toast(f'✅ Objetivo actualizado a {nuevo_objetivo} días', icon='✅')
+            time.sleep(1)
+            st.rerun()
+        
+        st.divider()
+        
         col_opt1, col_opt2 = st.columns(2)
         
         with col_opt1:
@@ -294,13 +331,14 @@ if st.session_state.profiles:
 {'=' * 50}
 
 Perfil: {user}
+Objetivo: {profile['tipo']} ({objetivo} días)
 Fecha de reporte: {datetime.now().strftime('%d/%m/%Y %H:%M')}
 
 PROGRESO:
 ---------
-Días trabajados: {dias} / 179
+Días trabajados: {dias} / {objetivo}
 Días restantes: {faltantes}
-Porcentaje completado: {min(100, round((dias / 179) * 100))}%
+Porcentaje completado: {min(100, round((dias / objetivo) * 100))}%
 
 HISTORIAL DE REGISTROS:
 -----------------------
