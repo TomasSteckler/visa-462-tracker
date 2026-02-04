@@ -3,6 +3,7 @@ import pdfplumber
 import re
 import math
 from datetime import datetime
+import time
 
 st.set_page_config(page_title="Visa 462 Tracker", page_icon="🇦🇺", initial_sidebar_state="expanded")
 
@@ -199,19 +200,41 @@ if st.session_state.profiles:
             
             st.progress(progreso_nuevo / 100)
             
-            # Botón de confirmación
+            # Botón de confirmación CON FEEDBACK MEJORADO
             if st.button("✅ Confirmar y Guardar", type="primary", key="confirm", use_container_width=True):
-                profile["days"] += dias_sumar
+                # Spinner mientras guarda
+                with st.spinner('⏳ Guardando tu registro...'):
+                    time.sleep(0.5)
+                    
+                    profile["days"] += dias_sumar
+                    
+                    nombre_archivo = uploaded.name if uploaded else "Manual"
+                    
+                    profile["history"].append(
+                        f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_sumar} días ({total}h) [{nombre_archivo}]"
+                    )
                 
-                # Nombre del archivo para el historial
-                nombre_archivo = uploaded.name if uploaded else "Manual"
+                # Toast notifications
+                st.toast('✅ ¡Registro guardado!', icon='✅')
+                time.sleep(0.2)
+                st.toast(f'📊 Nuevo total: {nuevo_total}/179 días', icon='📊')
                 
-                profile["history"].append(
-                    f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_sumar} días ({total}h) [{nombre_archivo}]"
-                )
+                # Calcular progreso
+                nuevo_progreso = min(100, round((nuevo_total / 179) * 100))
                 
-                st.success(f"🎉 ¡Perfecto! Se agregaron **{dias_sumar} días**")
+                # Mensaje grande
+                st.success(f"""
+### 🎉 ¡Registro guardado exitosamente!
+
+✅ **{dias_sumar} días** agregados a tu contador
+
+📊 **Progreso:** {nuevo_total} / 179 días ({nuevo_progreso}%)
+
+🎯 Te faltan **{179 - nuevo_total}** días para completar
+                """)
+                
                 st.balloons()
+                time.sleep(2.5)
                 st.rerun()
     
     st.divider()
@@ -222,10 +245,15 @@ if st.session_state.profiles:
     horas = st.number_input("Horas trabajadas:", 0.0, 200.0, 0.0, 0.5, key="manual")
     
     if st.button("➕ Agregar Días", key="manual_btn") and horas > 0:
-        dias_manual = 7 if horas >= 35 else math.ceil(horas/7.6)
-        profile["days"] += dias_manual
-        profile["history"].append(f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_manual} días ({horas}h) [Manual]")
-        st.success(f"✅ Agregados {dias_manual} días")
+        with st.spinner('Guardando...'):
+            dias_manual = 7 if horas >= 35 else math.ceil(horas/7.6)
+            profile["days"] += dias_manual
+            profile["history"].append(f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_manual} días ({horas}h) [Manual]")
+            time.sleep(0.5)
+        
+        st.toast(f'✅ {dias_manual} días agregados!', icon='✅')
+        st.success(f"✅ Agregados {dias_manual} días. Nuevo total: {profile['days']}/179")
+        time.sleep(1.5)
         st.rerun()
     
     st.divider()
@@ -247,7 +275,8 @@ if st.session_state.profiles:
                         profile["days"] -= dias_a_restar
                     
                     profile["history"].remove(h)
-                    st.warning("Registro eliminado")
+                    st.toast('🗑️ Registro eliminado', icon='🗑️')
+                    time.sleep(0.5)
                     st.rerun()
     else:
         st.info("Sin registros aún. ¡Sube tu primer payslip!")
@@ -291,7 +320,8 @@ HISTORIAL DE REGISTROS:
                 if st.checkbox("⚠️ ¿Estás seguro?", key="confirm_reset"):
                     profile["days"] = 0
                     profile["history"].append(f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - RESET COMPLETO")
-                    st.warning("Contador reseteado a 0")
+                    st.toast('🔄 Contador reseteado', icon='🔄')
+                    time.sleep(1)
                     st.rerun()
 
 else:
