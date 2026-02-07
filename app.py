@@ -21,7 +21,6 @@ supabase = init_supabase()
 
 # --- GENERAR ID DE DISPOSITIVO ---
 def get_device_id():
-    """Generar o recuperar ID único de dispositivo"""
     if 'device_id' not in st.session_state:
         params = st.query_params
         if 'device_id' in params:
@@ -33,11 +32,9 @@ def get_device_id():
 
 # --- FUNCIONES DE BASE DE DATOS ---
 def hash_pin(pin):
-    """Hash del PIN para seguridad"""
     return hashlib.sha256(pin.encode()).hexdigest()
 
 def cargar_perfil(username, pin=None):
-    """Cargar perfil desde Supabase con verificación de PIN"""
     try:
         query = supabase.table("profiles").select("*").eq("username", username)
         response = query.execute()
@@ -57,7 +54,6 @@ def cargar_perfil(username, pin=None):
         return None
 
 def guardar_perfil(username, days, objetivo, tipo, history, pin=None, device_id=None):
-    """Guardar o actualizar perfil en Supabase"""
     try:
         existing = supabase.table("profiles").select("id").eq("username", username).execute()
         
@@ -86,7 +82,6 @@ def guardar_perfil(username, days, objetivo, tipo, history, pin=None, device_id=
         return False
 
 def listar_perfiles_dispositivo():
-    """Obtener perfiles de este dispositivo"""
     try:
         device_id = get_device_id()
         response = supabase.table("profiles").select("username").eq("device_id", device_id).execute()
@@ -94,6 +89,54 @@ def listar_perfiles_dispositivo():
     except Exception as e:
         st.error(f"Error al listar perfiles: {e}")
         return []
+
+# --- DETECTOR AUTOMÁTICO DE HORAS ---
+def detectar_horas_inteligente(texto):
+    """
+    Busca números cerca de palabras clave relacionadas con horas trabajadas.
+    100% gratis, sin APIs externas.
+    """
+    
+    # Palabras clave que indican horas trabajadas
+    palabras_clave = [
+        'hours', 'horas', 'hrs', 'hour',
+        'time', 'worked', 'trabajo',
+        'normal', 'ordinary', 'regular',
+        'overtime', 'over time', 'extra',
+        'shift', 'turno',
+        'w/e', 'week ending'
+    ]
+    
+    # Dividir en líneas
+    lineas = texto.lower().split('\n')
+    
+    candidatos = {}  # {numero: contexto}
+    
+    for linea in lineas:
+        # Si la línea contiene alguna palabra clave
+        if any(kw in linea for kw in palabras_clave):
+            # Buscar todos los números en esa línea
+            numeros = re.findall(r'\b(\d{1,3}(?:\.\d{1,2})?)\b', linea)
+            
+            for num_str in numeros:
+                try:
+                    num = float(num_str)
+                    
+                    # Filtrar rango razonable de horas
+                    if 0.5 <= num <= 100:
+                        # Evitar números que claramente no son horas
+                        # (años, códigos, montos grandes)
+                        if num < 200 and num != 2025 and num != 2024:
+                            # Guardar contexto para debugging
+                            if num not in candidatos:
+                                candidatos[num] = linea.strip()
+                except:
+                    continue
+    
+    # Ordenar por valor (descendente)
+    horas_encontradas = sorted(candidatos.keys(), reverse=True)
+    
+    return horas_encontradas, candidatos
 
 # --- INICIALIZAR SESIÓN ---
 if 'current_user' not in st.session_state:
@@ -236,82 +279,35 @@ else:
                         st.error("❌ PDF vacío o escaneado")
                         st.stop()
                     
-                    candidatos = []
+                    # --- DETECTOR AUTOMÁTICO INTELIGENTE ---
+                    with st.spinner('🔍 Analizando payslip...'):
+                        horas_encontradas, contextos = detectar_horas_inteligente(texto)
                     
-                    # --- DETECTORES MULTI-FORMATO ---
-                    
-                    # FORMATO 1: Hays/CIVEO - "Normal Time W/E"
-                    patron_hays = r'Normal Time W/E.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
-                    matches_hays = re.findall(patron_hays, texto)
-                    
-                    if matches_hays:
-                        for hora in matches_hays:
-                            candidatos.append(float(hora))
+                    if horas_encontradas:
+                        st.success(f"✅ **Detecté {len(horas_encontradas)} valores posibles de horas**")
                         
-                        total_hays = sum([float(h) for h in matches_hays])
-                        st.success(f"✅ **Hays/CIVEO detectado:** {len(matches_hays)} línea(s)")
+                        # Mostrar con contexto
+                        with st.expander("🔍 Ver valores detectados con contexto"):
+                            for h in horas_encontradas:
+                                st.text(f"{h} horas → {contextos[h][:80]}...")
                         
-                        for i, h in enumerate(matches_hays, 1):
-                            st.info(f"   Línea {i}: {h} horas")
-                        
-                        if len(matches_hays) > 1:
-                            st.write(f"**Total combinado:** {total_hays} horas")
-                    
-                    # FORMATO 2: Statum Services - "Base Hourly"
-                    patron_statum = r'Base Hourly.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
-                    match_statum = re.search(patron_statum, texto)
-                    
-                    if match_statum:
-                        horas_statum = float(match_statum.group(1))
-                        candidatos.append(horas_statum)
-                        st.success(f"✅ **Statum Services detectado:** {horas_statum} horas")
-                    
-                    # FORMATO 3: COMPASS GROUP - "Normal hours W/E" o "Shift Ldg W/E"
-                    patron_compass = r'(?:Normal hours|Shift Ldg) W/E[^\d]*(\d{1,3}(?:\.\d{1,2})?)'
-                    matches_compass = re.findall(patron_compass, texto)
-                    
-                    if matches_compass:
-                        st.success(f"✅ **COMPASS GROUP detectado:** {len(matches_compass)} entrada(s)")
-                        for h in matches_compass:
-                            horas = float(h)
-                            candidatos.append(horas)
-                            st.info(f"   {h} horas")
-                        
-                        if len(matches_compass) > 1:
-                            total_compass = sum([float(h) for h in matches_compass])
-                            st.write(f"**Total combinado:** {total_compass} horas")
-                    
-                    # Si se detectó algo
-                    if candidatos:
-                        st.write("---")
-                        candidatos = sorted(list(set(candidatos)), reverse=True)
-                        
+                        # Selección
                         seleccion = st.multiselect(
-                            "Confirma las horas:",
-                            candidatos,
-                            default=candidatos,
-                            format_func=lambda x: f"{x} horas"
+                            "Selecciona las horas trabajadas:",
+                            horas_encontradas,
+                            default=horas_encontradas[:2] if len(horas_encontradas) <= 3 else [],
+                            format_func=lambda x: f"{x} horas",
+                            help="Selecciona solo las horas trabajadas (normal + overtime si aplica)"
                         )
                         
                     else:
-                        st.warning("⚠️ No reconocí el formato automáticamente")
+                        st.warning("⚠️ No detecté horas automáticamente")
                         
-                        with st.expander("🔍 Ver texto extraído (debug)"):
-                            st.text(texto[:1500])
+                        with st.expander("🔍 Ver texto completo (debug)"):
+                            st.text(texto[:2000])
                         
-                        st.info("👇 Selecciona manualmente:")
-                        
-                        nums = re.findall(r"(?<!\$)\b(\d{1,3}(?:[\.,]\d{1,2})?)\b", texto)
-                        todos = sorted(
-                            list(set([float(n.replace(',','.')) for n in nums if 0.5 <= float(n.replace(',','.')) <= 200])), 
-                            reverse=True
-                        )
-                        
-                        if todos:
-                            seleccion = st.multiselect("Valores:", todos[:15], format_func=lambda x: f"{x} horas")
-                        else:
-                            st.error("❌ No encontré números")
-                            seleccion = []
+                        st.info("👇 Ingresa las horas manualmente abajo")
+                        seleccion = []
             
             except Exception as e:
                 st.error(f"❌ Error: {e}")
@@ -322,10 +318,12 @@ else:
                 total = sum(seleccion)
                 
                 st.write("---")
-                st.write(f"### 📊 Total: **{total} horas**")
+                st.write(f"### 📊 Total seleccionado: **{total} horas**")
                 
                 if total > 100:
                     st.warning("⚠️ Más de 100 horas parece incorrecto")
+                elif total < 1:
+                    st.error("❌ El valor parece demasiado bajo")
                 
                 if total >= 35:
                     dias_sumar = 7
