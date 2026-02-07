@@ -23,14 +23,11 @@ supabase = init_supabase()
 def get_device_id():
     """Generar o recuperar ID único de dispositivo"""
     if 'device_id' not in st.session_state:
-        # Intentar recuperar de query params (simulando localStorage)
         params = st.query_params
         if 'device_id' in params:
             st.session_state.device_id = params['device_id']
         else:
-            # Generar nuevo ID
             st.session_state.device_id = str(uuid.uuid4())
-            # Guardar en URL para persistencia
             st.query_params['device_id'] = st.session_state.device_id
     return st.session_state.device_id
 
@@ -47,14 +44,13 @@ def cargar_perfil(username, pin=None):
         
         if response.data:
             profile = response.data[0]
-            # Si tiene PIN, verificar
             if profile.get('pin'):
                 if pin and hash_pin(pin) == profile['pin']:
                     return profile
                 elif not pin:
-                    return None  # Requiere PIN
+                    return None
             else:
-                return profile  # Perfil sin PIN (retrocompatibilidad)
+                return profile
         return None
     except Exception as e:
         st.error(f"Error al cargar perfil: {e}")
@@ -73,11 +69,9 @@ def guardar_perfil(username, days, objetivo, tipo, history, pin=None, device_id=
             "history": history
         }
         
-        # Agregar PIN si se proporciona
         if pin:
             data["pin"] = hash_pin(pin)
         
-        # Agregar device_id para recordar sesión
         if device_id:
             data["device_id"] = device_id
         
@@ -101,11 +95,6 @@ def listar_perfiles_dispositivo():
         st.error(f"Error al listar perfiles: {e}")
         return []
 
-def verificar_pin(username, pin):
-    """Verificar si el PIN es correcto"""
-    profile = cargar_perfil(username, pin)
-    return profile is not None
-
 # --- INICIALIZAR SESIÓN ---
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
@@ -122,10 +111,9 @@ st.markdown("Calcula tus días de **Specified Work** - *Guardado seguro en la nu
 # --- GESTIÓN DE PERFILES ---
 st.header("👤 Tu Perfil")
 
-# Perfiles de este dispositivo
 mis_perfiles = listar_perfiles_dispositivo()
 
-# --- ESTADO: SIN PERFIL O SIN AUTENTICAR ---
+# --- SIN AUTENTICAR ---
 if not st.session_state.authenticated:
     
     if mis_perfiles:
@@ -157,7 +145,6 @@ if not st.session_state.authenticated:
                 st.session_state.show_create_form = True
                 st.rerun()
     
-    # Formulario de creación
     if not mis_perfiles or st.session_state.get('show_create_form', False):
         st.divider()
         st.subheader("Crear nuevo perfil")
@@ -178,7 +165,6 @@ if not st.session_state.authenticated:
             submit = st.form_submit_button("➕ Crear Perfil", type="primary", use_container_width=True)
             
             if submit and nuevo:
-                # Validaciones
                 if len(pin_nuevo) < 4:
                     st.error("❌ El PIN debe tener al menos 4 dígitos")
                 elif pin_nuevo != pin_confirmar:
@@ -186,7 +172,6 @@ if not st.session_state.authenticated:
                 elif nuevo in mis_perfiles:
                     st.error("⚠️ Ya tienes un perfil con ese nombre")
                 else:
-                    # Crear perfil
                     dias_objetivo = 88 if "88" in objetivo else 179
                     tipo = "Primera WHV" if dias_objetivo == 88 else "Segunda WHV"
                     
@@ -198,16 +183,13 @@ if not st.session_state.authenticated:
                         st.toast(f'✅ Perfil creado: {dias_objetivo} días', icon='✅')
                         time.sleep(0.5)
                         st.rerun()
-                    else:
-                        st.error("❌ Error al crear perfil")
 
-# --- ESTADO: AUTENTICADO ---
+# --- AUTENTICADO ---
 else:
     user = st.session_state.current_user
     profile = st.session_state.profile_data
     
     if profile:
-        # Botón de cerrar sesión
         col_header1, col_header2 = st.columns([3, 1])
         with col_header1:
             st.subheader(f"Hola, {user}! 👋")
@@ -256,7 +238,9 @@ else:
                     
                     candidatos = []
                     
-                    # DETECTORES
+                    # --- DETECTORES MULTI-FORMATO ---
+                    
+                    # FORMATO 1: Hays/CIVEO - "Normal Time W/E"
                     patron_hays = r'Normal Time W/E.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
                     matches_hays = re.findall(patron_hays, texto)
                     
@@ -265,7 +249,7 @@ else:
                             candidatos.append(float(hora))
                         
                         total_hays = sum([float(h) for h in matches_hays])
-                        st.success(f"✅ **Hays detectado:** {len(matches_hays)} línea(s)")
+                        st.success(f"✅ **Hays/CIVEO detectado:** {len(matches_hays)} línea(s)")
                         
                         for i, h in enumerate(matches_hays, 1):
                             st.info(f"   Línea {i}: {h} horas")
@@ -273,14 +257,31 @@ else:
                         if len(matches_hays) > 1:
                             st.write(f"**Total combinado:** {total_hays} horas")
                     
+                    # FORMATO 2: Statum Services - "Base Hourly"
                     patron_statum = r'Base Hourly.*?(\d{1,3}(?:\.\d{1,2})?)\s*\$'
                     match_statum = re.search(patron_statum, texto)
                     
                     if match_statum:
                         horas_statum = float(match_statum.group(1))
                         candidatos.append(horas_statum)
-                        st.success(f"✅ **Statum detectado:** {horas_statum} horas")
+                        st.success(f"✅ **Statum Services detectado:** {horas_statum} horas")
                     
+                    # FORMATO 3: COMPASS GROUP - "Normal hours W/E" o "Shift Ldg W/E"
+                    patron_compass = r'(?:Normal hours|Shift Ldg) W/E[^\d]*(\d{1,3}(?:\.\d{1,2})?)'
+                    matches_compass = re.findall(patron_compass, texto)
+                    
+                    if matches_compass:
+                        st.success(f"✅ **COMPASS GROUP detectado:** {len(matches_compass)} entrada(s)")
+                        for h in matches_compass:
+                            horas = float(h)
+                            candidatos.append(horas)
+                            st.info(f"   {h} horas")
+                        
+                        if len(matches_compass) > 1:
+                            total_compass = sum([float(h) for h in matches_compass])
+                            st.write(f"**Total combinado:** {total_compass} horas")
+                    
+                    # Si se detectó algo
                     if candidatos:
                         st.write("---")
                         candidatos = sorted(list(set(candidatos)), reverse=True)
@@ -293,10 +294,12 @@ else:
                         )
                         
                     else:
-                        st.warning("⚠️ No reconocí el formato")
+                        st.warning("⚠️ No reconocí el formato automáticamente")
                         
-                        with st.expander("🔍 Ver texto (debug)"):
+                        with st.expander("🔍 Ver texto extraído (debug)"):
                             st.text(texto[:1500])
+                        
+                        st.info("👇 Selecciona manualmente:")
                         
                         nums = re.findall(r"(?<!\$)\b(\d{1,3}(?:[\.,]\d{1,2})?)\b", texto)
                         todos = sorted(
@@ -322,14 +325,14 @@ else:
                 st.write(f"### 📊 Total: **{total} horas**")
                 
                 if total > 100:
-                    st.warning("⚠️ Más de 100 horas")
+                    st.warning("⚠️ Más de 100 horas parece incorrecto")
                 
                 if total >= 35:
                     dias_sumar = 7
-                    st.success(f"✅ Semana completa: **7 días**")
+                    st.success(f"✅ **Semana completa:** ≥35h = **7 días**")
                 else:
                     dias_sumar = math.ceil(total / 7.6)
-                    st.info(f"🔢 {total}h ÷ 7.6 = **{dias_sumar} días**")
+                    st.info(f"🔢 **Cálculo:** {total}h ÷ 7.6 = **{dias_sumar} días**")
                 
                 nuevo_total = dias + dias_sumar
                 
@@ -340,7 +343,7 @@ else:
                 st.progress(min(nuevo_total/objetivo, 1.0))
                 
                 if st.button("✅ Confirmar y Guardar", type="primary", key="confirm", use_container_width=True):
-                    with st.spinner('⏳ Guardando...'):
+                    with st.spinner('⏳ Guardando en la nube...'):
                         profile["days"] += dias_sumar
                         
                         registro = f"{datetime.now().strftime('%d/%m/%Y %H:%M')} - +{dias_sumar} días ({total}h) [{uploaded.name}]"
@@ -372,7 +375,7 @@ else:
         # --- ENTRADA MANUAL ---
         st.subheader("✍️ Agregar manualmente")
         
-        horas = st.number_input("Horas:", 0.0, 200.0, 0.0, 0.5, key="manual")
+        horas = st.number_input("Horas trabajadas:", 0.0, 200.0, 0.0, 0.5, key="manual")
         
         if st.button("➕ Agregar", key="manual_btn") and horas > 0:
             with st.spinner('Guardando...'):
@@ -419,7 +422,6 @@ else:
         # --- OPCIONES ---
         with st.expander("⚙️ Opciones"):
             
-            # Cambiar objetivo
             nuevo_obj = st.radio(
                 "Cambiar objetivo:",
                 [88, 179],
@@ -440,7 +442,6 @@ else:
             
             st.divider()
             
-            # Descargar
             if st.button("📥 Descargar resumen"):
                 resumen = f"""VISA 462 - RESUMEN
 {'=' * 50}
